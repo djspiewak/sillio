@@ -2,7 +2,8 @@ package sillio
 
 import cats.{Monad, StackSafeMonad}
 
-import scala.concurrent.{CancellationException, ExecutionContext, Future, Promise}
+import scala.concurrent.{Await, CancellationException, ExecutionContext, Future, Promise}
+import scala.concurrent.duration.Duration
 import scala.util.{Failure, Success, Try}
 
 sealed abstract class IO[+A] {
@@ -24,6 +25,9 @@ sealed abstract class IO[+A] {
     executor.execute(fiber)
     promise.future
   }
+
+  def unsafeRunSync(executor: ExecutionContext): A =
+    Await.result(unsafeToFuture(executor), Duration.Inf)
 }
 
 object IO {

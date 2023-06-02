@@ -28,3 +28,7 @@ lazy val core = crossProject(JVMPlatform)
       "org.typelevel" %%% "cats-core" % "2.9.0",
       "org.scalameta" %%% "munit" % "0.7.29" % Test)
   )
+
+lazy val benchmarks = project.in(file("benchmarks"))
+  .dependsOn(core.jvm)
+  .enablePlugins(JmhPlugin)
