@@ -4,6 +4,7 @@ import cats.syntax.all._
 
 import munit.FunSuite
 
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 
 class IOSuite extends FunSuite {
@@ -53,6 +54,45 @@ class IOSuite extends FunSuite {
       .start
       .flatMap(f => f.cancel >> f.join)
       .flatMap(e => IO(assertEquals(e, Left(None))))
+  }
+
+  test("right-associated flatMap stack safety") {
+    val unit = IO.pure(())
+
+    def loop(i: Int): IO[Unit] =
+      if (i > 1000000)
+        unit
+      else
+        unit.flatMap(_ => loop(i + 1))
+
+    loop(0)
+  }
+
+  test("left-associated flatMap stack safety") {
+    val unit = IO.pure(())
+
+    @tailrec
+    def loop(i: Int, acc: IO[Unit]): IO[Unit] =
+      if (i > 1000000)
+        acc
+      else
+        loop(i + 1, acc.flatMap(_ => unit))
+
+    loop(0, unit)
+  }
+
+  test("left-associated flatMap error safety".ignore) {
+    case object TestException extends RuntimeException
+    val unit = IO.pure(())
+
+    @tailrec
+    def loop(i: Int, acc: IO[Unit]): IO[Unit] =
+      if (i > 1000000)
+        acc
+      else
+        loop(i + 1, acc.flatMap(_ => unit))
+
+    loop(0, IO.raiseError(TestException)).handleErrorWith(_ => unit)
   }
 
   override def munitValueTransforms = super.munitValueTransforms ++ List(
