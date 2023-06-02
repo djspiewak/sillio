@@ -47,11 +47,11 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
         case null => ()
 
         case Pure(value) =>
-          current = continue(Right(value))
+          current = continue(null, value)
           run()
 
         case Error(value) =>
-          current = continue(Left(value))
+          current = continue(value, null)
           run()
 
         case FlatMap(ioe, f) =>
@@ -76,13 +76,17 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
           try {
             k { e =>
               if (!done.getAndSet(true) && !canceled) {
-                current = continue(e)
+                var error: Throwable = null
+                var result: Any = null
+                e.fold(error = _, result = _)
+
+                current = continue(error, result)
                 executor.execute(this)
               }
             }
           } catch {
             case NonFatal(t) =>
-              continue(Left(t))
+              continue(t, null)
 
             case t: Throwable =>
               executor.reportFailure(t)
@@ -93,36 +97,38 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
           val fiber = new IOFiber(body, executor)
           executor.execute(fiber)
 
-          current = continue(Right(fiber))
+          current = continue(null, fiber)
           run()
       }
     }
   }
 
-  private[this] def terminusK(result: Either[Throwable, Any]): IO[Any] = {
-    fireCompletion(result.leftMap(_.some).map(_.asInstanceOf[A]))
+  private[this] def terminusK(error: Throwable, result: Any): IO[Any] = {
+    if (error != null)
+      fireCompletion(Left(Some(error)))
+    else
+      fireCompletion(Right(result.asInstanceOf[A]))
+
     null
   }
 
-  private[this] def flatMapK(result: Either[Throwable, Any]): IO[Any] =
-    result match {
-      case e @ Left(_) =>
-        state.pop()
-        continue(e)
-
-      case Right(value) =>
-        state.pop().asInstanceOf[Any => IO[Any]](value)
+  private[this] def flatMapK(error: Throwable, result: Any): IO[Any] = {
+    if (error == null) {
+      state.pop().asInstanceOf[Any => IO[Any]](result)
+    } else {
+      state.pop()
+      continue(error, result)
     }
+  }
 
-  private[this] def handleErrorWithK(result: Either[Throwable, Any]): IO[Any] =
-    result match {
-      case Left(value) =>
-        state.pop().asInstanceOf[Throwable => IO[Any]](value)
-
-      case e @ Right(_) =>
-        state.pop()
-        continue(e)
+  private[this] def handleErrorWithK(error: Throwable, result: Any): IO[Any] = {
+    if (error == null) {
+      state.pop()
+      continue(error, result)
+    } else {
+      state.pop().asInstanceOf[Throwable => IO[Any]](error)
     }
+  }
 
   @tailrec
   def onComplete(f: Either[Option[Throwable], A] => Unit): Unit = {
@@ -149,10 +155,10 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
     }
   }
 
-  private[this] def continue(e: Either[Throwable, Any]): IO[Any] =
+  private[this] def continue(error: Throwable, result: Any): IO[Any] =
     (continuations.pop(): @switch) match {
-      case 0 => terminusK(e)
-      case 1 => flatMapK(e)
-      case 2 => handleErrorWithK(e)
+      case 0 => terminusK(error, result)
+      case 1 => flatMapK(error, result)
+      case 2 => handleErrorWithK(error, result)
     }
 }
