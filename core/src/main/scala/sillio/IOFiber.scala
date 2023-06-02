@@ -12,8 +12,16 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
 
   private[this] var current: IO[Any] = _current
 
-  private[this] var continuations: List[Either[Throwable, Any] => IO[Any]] =
-    { oc => fireCompletion(oc.leftMap(_.some).map(_.asInstanceOf[A])); null } :: Nil
+  private[this] val continuations: ArrayStack[Either[Throwable, Any] => IO[Any]] = {
+    val back = new ArrayStack[Either[Throwable, Any] => IO[Any]]
+
+    back push { oc =>
+      fireCompletion(oc.leftMap(_.some).map(_.asInstanceOf[A]))
+      null
+    }
+
+    back
+  }
 
   private[this] val listeners: AtomicReference[Set[Either[Option[Throwable], A] => Unit]] =
     new AtomicReference(Set())
@@ -132,14 +140,10 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
     }
   }
 
-  private[this] def continue(e: Either[Throwable, Any]): IO[Any] = {
+  private[this] def continue(e: Either[Throwable, Any]): IO[Any] =
     // we never call this when it could be empty
-    val cont :: tail = continuations: @unchecked
-    continuations = tail
-
-    cont(e)
-  }
+    continuations.pop()(e)
 
   private[this] def push(cont: Either[Throwable, Any] => IO[Any]): Unit =
-    continuations ::= cont
+    continuations.push(cont)
 }
