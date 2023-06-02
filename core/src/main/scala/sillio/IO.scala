@@ -28,6 +28,8 @@ sealed abstract class IO[+A] {
 
   def unsafeRunSync(executor: ExecutionContext): A =
     Await.result(unsafeToFuture(executor), Duration.Inf)
+
+  private[sillio] def tag: Int
 }
 
 object IO {
@@ -42,13 +44,27 @@ object IO {
     def flatMap[A, B](fa: IO[A])(f: A => IO[B]): IO[B] = fa.flatMap(f)
   }
 
-  final case class Pure[+A](value: A) extends IO[A]
-  final case class Error(value: Throwable) extends IO[Nothing]
+  final case class Pure[+A](value: A) extends IO[A] {
+    def tag: Int = 0
+  }
 
-  final case class FlatMap[E, +A](ioe: IO[E], f: E => IO[A]) extends IO[A]
-  final case class HandleErrorWith[A](iao: IO[A], f: Throwable => IO[A]) extends IO[A]
+  final case class Error(value: Throwable) extends IO[Nothing] {
+    def tag: Int = 1
+  }
 
-  final case class Async[+A](k: (Either[Throwable, A] => Unit) => Unit) extends IO[A]
+  final case class FlatMap[E, +A](ioe: IO[E], f: E => IO[A]) extends IO[A] {
+    def tag: Int = 2
+  }
 
-  final case class Start[+A](body: IO[A]) extends IO[Fiber[A]]
+  final case class HandleErrorWith[A](ioa: IO[A], f: Throwable => IO[A]) extends IO[A] {
+    def tag: Int = 3
+  }
+
+  final case class Async[+A](k: (Either[Throwable, A] => Unit) => Unit) extends IO[A] {
+    def tag: Int = 4
+  }
+
+  final case class Start[+A](body: IO[A]) extends IO[Fiber[A]] {
+    def tag: Int = 5
+  }
 }

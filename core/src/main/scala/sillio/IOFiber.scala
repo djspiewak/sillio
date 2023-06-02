@@ -42,39 +42,46 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
   def run(): Unit = {
     import IO._
 
-    if (!canceled) {
-      current match {
-        case null => ()
+    if (!canceled && current != null) {
+      (current.tag: @switch) match {
+        case 0 =>
+          val cur = current.asInstanceOf[Pure[Any]]
 
-        case Pure(value) =>
-          current = continue(null, value)
+          current = continue(null, cur.value)
           run()
 
-        case Error(value) =>
-          current = continue(value, null)
+        case 1 =>
+          val cur = current.asInstanceOf[Error]
+          current = continue(cur.value, null)
           run()
 
-        case FlatMap(ioe, f) =>
-          state.push(f)
+        case 2 =>
+          val cur = current.asInstanceOf[FlatMap[Any, Any]]
+
+          state.push(cur.f)
           continuations.push(1)
 
-          current = ioe
+          current = cur.ioe
           run()
 
-        case HandleErrorWith(ioa, f) =>
-          state.push(f)
+        case 3 =>
+          val cur = current.asInstanceOf[HandleErrorWith[Any]]
+
+          state.push(cur.f)
           continuations.push(2)
 
-          current = ioa
+          current = cur.ioa
           run()
 
-        case Async(k) =>
+        case 4 =>
+          val cur = current.asInstanceOf[Async[Any]]
+
           current = null
 
           val done = new AtomicBoolean(false)
 
           try {
-            k { e =>
+            cur.k { e =>
               if (!done.getAndSet(true) && !canceled) {
                 var error: Throwable = null
                 var result: Any = null
@@ -93,8 +100,10 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
               System.exit(-1)
           }
 
-        case Start(body) =>
-          val fiber = new IOFiber(body, executor)
+        case 5 =>
+          val cur = current.asInstanceOf[Start[Any]]
+
+          val fiber = new IOFiber(cur.body, executor)
           executor.execute(fiber)
 
           current = continue(null, fiber)
