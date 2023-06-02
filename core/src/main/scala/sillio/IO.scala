@@ -2,7 +2,8 @@ package sillio
 
 import cats.{Monad, StackSafeMonad}
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{CancellationException, ExecutionContext, Future, Promise}
+import scala.util.{Failure, Success, Try}
 
 sealed abstract class IO[+A] {
   def flatMap[B](f: A => IO[B]): IO[B] = IO.FlatMap(this, f)
@@ -10,7 +11,19 @@ sealed abstract class IO[+A] {
 
   def start: IO[Fiber[A]] = IO.Start(this)
 
-  def unsafeToFuture(executor: ExecutionContext): Future[A] = ???
+  def unsafeToFuture(executor: ExecutionContext): Future[A] = {
+    val promise = Promise[A]()
+    val fiber = new IOFiber(this, executor)
+
+    fiber onComplete {
+      case Left(Some(t)) => promise.complete(Failure(t))
+      case Left(None) => promise.complete(Failure(new CancellationException))
+      case Right(a) => promise.complete(Success(a))
+    }
+
+    executor.execute(fiber)
+    promise.future
+  }
 }
 
 object IO {

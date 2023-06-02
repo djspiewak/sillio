@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
 final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fiber[A] with Runnable {
 
@@ -14,6 +14,9 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
 
   private[this] var continuations: List[Either[Throwable, Any] => IO[Any]] =
     { oc => fireCompletion(oc.leftMap(_.some).map(_.asInstanceOf[A])); null } :: Nil
+
+  private[this] val listeners: AtomicReference[Set[Either[Option[Throwable], A] => Unit]] =
+    new AtomicReference(Set())
 
   def cancel: IO[Unit] = ???
 
@@ -75,7 +78,7 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
             continue(Left(t))
 
           case t: Throwable =>
-            t.printStackTrace()
+            executor.reportFailure(t)
             System.exit(-1)
         }
 
@@ -88,9 +91,17 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
     }
   }
 
-  def onComplete(f: Either[Option[Throwable], A] => Unit): Unit = ???
+  @tailrec
+  def onComplete(f: Either[Option[Throwable], A] => Unit): Unit = {
+    val ls = listeners.get()
+    val ls2 = ls + f
+    if (!listeners.compareAndSet(ls, ls2)) {
+      onComplete(f)
+    }
+  }
 
-  private[this] def fireCompletion(outcome: Either[Option[Throwable], A]): Unit = ???
+  private[this] def fireCompletion(outcome: Either[Option[Throwable], A]): Unit =
+    listeners.get().foreach(_(outcome))
 
   private[this] def continue(e: Either[Throwable, Any]): IO[Any] = {
     // we never call this when it could be empty
