@@ -18,90 +18,119 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
   private[this] val listeners: AtomicReference[Set[Either[Option[Throwable], A] => Unit]] =
     new AtomicReference(Set())
 
-  def cancel: IO[Unit] = ???
+  @volatile
+  private[this] var canceled: Boolean = false
 
-  def join: IO[Either[Option[Throwable], A]] = ???
+  @volatile
+  private[this] var outcome: Either[Option[Throwable], A] = null
+
+  // we don't have finalizers, so we don't need to sweat backpressure
+  def cancel: IO[Unit] =
+    IO {
+      canceled = true
+      fireCompletion(Left(None))
+    }
+
+  def join: IO[Either[Option[Throwable], A]] =
+    IO.async[Either[Option[Throwable], A]] { resume =>
+      onComplete(e => resume(Right(e)))
+    }
 
   @tailrec
   def run(): Unit = {
     import IO._
 
-    current match {
-      case null => ()
+    if (!canceled) {
+      current match {
+        case null => ()
 
-      case Pure(value) =>
-        current = continue(Right(value))
-        run()
+        case Pure(value) =>
+          current = continue(Right(value))
+          run()
 
-      case Error(value) =>
-        current = continue(Left(value))
-        run()
+        case Error(value) =>
+          current = continue(Left(value))
+          run()
 
-      case FlatMap(ioe: IO[e], f) =>
-        push {
-          case e @ Left(_) =>
-            continue(e)
+        case FlatMap(ioe: IO[e], f) =>
+          push {
+            case e @ Left(_) =>
+              continue(e)
 
-          case Right(value) =>
-            f(value.asInstanceOf[e])
-        }
-
-        current = ioe
-        run()
-
-      case HandleErrorWith(ioa, f) =>
-        push {
-          case Left(value) =>
-            f(value)
-
-          case e @ Right(_) =>
-            continue(e)
-        }
-
-        current = ioa
-        run()
-
-      case Async(k) =>
-        current = null
-
-        val done = new AtomicBoolean(false)
-
-        try {
-          k { e =>
-            if (!done.getAndSet(true)) {
-              current = continue(e)
-              executor.execute(this)
-            }
+            case Right(value) =>
+              f(value.asInstanceOf[e])
           }
-        } catch {
-          case NonFatal(t) =>
-            continue(Left(t))
 
-          case t: Throwable =>
-            executor.reportFailure(t)
-            System.exit(-1)
-        }
+          current = ioe
+          run()
 
-      case Start(body) =>
-        val fiber = new IOFiber(body, executor)
-        executor.execute(fiber)
+        case HandleErrorWith(ioa, f) =>
+          push {
+            case Left(value) =>
+              f(value)
 
-        current = continue(Right(fiber))
-        run()
+            case e @ Right(_) =>
+              continue(e)
+          }
+
+          current = ioa
+          run()
+
+        case Async(k) =>
+          current = null
+
+          val done = new AtomicBoolean(false)
+
+          try {
+            k { e =>
+              if (!done.getAndSet(true) && !canceled) {
+                current = continue(e)
+                executor.execute(this)
+              }
+            }
+          } catch {
+            case NonFatal(t) =>
+              continue(Left(t))
+
+            case t: Throwable =>
+              executor.reportFailure(t)
+              System.exit(-1)
+          }
+
+        case Start(body) =>
+          val fiber = new IOFiber(body, executor)
+          executor.execute(fiber)
+
+          current = continue(Right(fiber))
+          run()
+      }
     }
   }
 
   @tailrec
   def onComplete(f: Either[Option[Throwable], A] => Unit): Unit = {
     val ls = listeners.get()
-    val ls2 = ls + f
-    if (!listeners.compareAndSet(ls, ls2)) {
-      onComplete(f)
+
+    if (ls == null) {
+      // race condition with fireCompletion; just chill for a second while it writes
+      while (outcome == null) {}
+
+      f(outcome)
+    } else {
+      val ls2 = ls + f
+      if (!listeners.compareAndSet(ls, ls2)) {
+        onComplete(f)
+      }
     }
   }
 
-  private[this] def fireCompletion(outcome: Either[Option[Throwable], A]): Unit =
-    listeners.get().foreach(_(outcome))
+  private[this] def fireCompletion(outcome: Either[Option[Throwable], A]): Unit = {
+    val ls = listeners.getAndSet(null)
+    if (ls != null) {
+      this.outcome = outcome
+      ls.foreach(_(outcome))
+    }
+  }
 
   private[this] def continue(e: Either[Throwable, Any]): IO[Any] = {
     // we never call this when it could be empty
