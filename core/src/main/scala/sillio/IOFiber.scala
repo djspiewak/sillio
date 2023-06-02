@@ -2,7 +2,7 @@ package sillio
 
 import cats.syntax.all._
 
-import scala.annotation.tailrec
+import scala.annotation.{switch, tailrec}
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
@@ -12,16 +12,10 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
 
   private[this] var current: IO[Any] = _current
 
-  private[this] val continuations: ArrayStack[Either[Throwable, Any] => IO[Any]] = {
-    val back = new ArrayStack[Either[Throwable, Any] => IO[Any]]
+  private[this] val continuations: ByteStack = new ByteStack
+  private[this] val state: ArrayStack[AnyRef] = new ArrayStack[AnyRef]
 
-    back push { oc =>
-      fireCompletion(oc.leftMap(_.some).map(_.asInstanceOf[A]))
-      null
-    }
-
-    back
-  }
+  continuations.push(0)
 
   private[this] val listeners: AtomicReference[Set[Either[Option[Throwable], A] => Unit]] =
     new AtomicReference(Set())
@@ -60,26 +54,16 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
           current = continue(Left(value))
           run()
 
-        case FlatMap(ioe: IO[e], f) =>
-          push {
-            case e @ Left(_) =>
-              continue(e)
-
-            case Right(value) =>
-              f(value.asInstanceOf[e])
-          }
+        case FlatMap(ioe, f) =>
+          state.push(f)
+          continuations.push(1)
 
           current = ioe
           run()
 
         case HandleErrorWith(ioa, f) =>
-          push {
-            case Left(value) =>
-              f(value)
-
-            case e @ Right(_) =>
-              continue(e)
-          }
+          state.push(f)
+          continuations.push(2)
 
           current = ioa
           run()
@@ -115,6 +99,31 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
     }
   }
 
+  private[this] def terminusK(result: Either[Throwable, Any]): IO[Any] = {
+    fireCompletion(result.leftMap(_.some).map(_.asInstanceOf[A]))
+    null
+  }
+
+  private[this] def flatMapK(result: Either[Throwable, Any]): IO[Any] =
+    result match {
+      case e @ Left(_) =>
+        state.pop()
+        continue(e)
+
+      case Right(value) =>
+        state.pop().asInstanceOf[Any => IO[Any]](value)
+    }
+
+  private[this] def handleErrorWithK(result: Either[Throwable, Any]): IO[Any] =
+    result match {
+      case Left(value) =>
+        state.pop().asInstanceOf[Throwable => IO[Any]](value)
+
+      case e @ Right(_) =>
+        state.pop()
+        continue(e)
+    }
+
   @tailrec
   def onComplete(f: Either[Option[Throwable], A] => Unit): Unit = {
     val ls = listeners.get()
@@ -141,9 +150,9 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
   }
 
   private[this] def continue(e: Either[Throwable, Any]): IO[Any] =
-    // we never call this when it could be empty
-    continuations.pop()(e)
-
-  private[this] def push(cont: Either[Throwable, Any] => IO[Any]): Unit =
-    continuations.push(cont)
+    (continuations.pop(): @switch) match {
+      case 0 => terminusK(e)
+      case 1 => flatMapK(e)
+      case 2 => handleErrorWithK(e)
+    }
 }
