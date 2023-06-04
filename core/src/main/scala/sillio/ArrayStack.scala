@@ -1,7 +1,7 @@
 package sillio
 
 private final class ArrayStack[A <: AnyRef] {
-  private[this] var buffer = new Array[AnyRef](16)
+  private[this] var buffer = new Array[AnyRef](2)
   private[this] var length = 0
 
   def push(a: A): Unit = {
