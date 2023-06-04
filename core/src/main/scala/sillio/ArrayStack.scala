@@ -20,8 +20,8 @@ private final class ArrayStack[A <: AnyRef] {
   }
 
   private[this] def checkAndGrow(): Unit = {
-    if (length == buffer.length) {
-      val buffer2 = new Array[AnyRef](length * 2)
+    if (length >= buffer.length) {
+      val buffer2 = new Array[AnyRef](buffer.length * 2)
       System.arraycopy(buffer, 0, buffer2, 0, length)
       buffer = buffer2
     }
