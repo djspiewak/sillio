@@ -38,22 +38,21 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
       onComplete(e => resume(Right(e)))
     }
 
+  def run(): Unit = runLoop(current)
+
   @tailrec
-  def run(): Unit = {
+  private[this] def runLoop(current: IO[Any]): Unit = {
     import IO._
 
     if (!canceled && current != null) {
       (current.tag: @switch) match {
         case 0 =>
           val cur = current.asInstanceOf[Pure[Any]]
-
-          current = continue(null, cur.value)
-          run()
+          runLoop(continue(null, cur.value))
 
         case 1 =>
           val cur = current.asInstanceOf[Error]
-          current = continue(cur.value, null)
-          run()
+          runLoop(continue(cur.value, null))
 
         case 2 =>
           val cur = current.asInstanceOf[FlatMap[Any, Any]]
@@ -61,8 +60,7 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
           state.push(cur.f)
           continuations.push(1)
 
-          current = cur.ioe
-          run()
+          runLoop(cur.ioe)
 
         case 3 =>
           val cur = current.asInstanceOf[HandleErrorWith[Any]]
@@ -70,13 +68,12 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
           state.push(cur.f)
           continuations.push(2)
 
-          current = cur.ioa
-          run()
+          runLoop(cur.ioa)
 
         case 4 =>
           val cur = current.asInstanceOf[Async[Any]]
 
-          current = null
+          this.current = null
 
           val done = new AtomicBoolean(false)
 
@@ -87,7 +84,7 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
                 var result: Any = null
                 e.fold(error = _, result = _)
 
-                current = continue(error, result)
+                this.current = continue(error, result)
                 executor.execute(this)
               }
             }
@@ -106,8 +103,7 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
           val fiber = new IOFiber(cur.body, executor)
           executor.execute(fiber)
 
-          current = continue(null, fiber)
-          run()
+          runLoop(continue(null, fiber))
       }
     }
   }
