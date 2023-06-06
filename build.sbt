@@ -17,6 +17,9 @@ val Scala3 = "3.3.0"
 ThisBuild / crossScalaVersions := Seq(Scala3)
 ThisBuild / scalaVersion := Scala3 // the default Scala
 
+ThisBuild / tlCiReleaseBranches := Seq()
+ThisBuild / tlCiReleaseTags := false
+
 lazy val root = tlCrossRootProject.aggregate(core)
 
 lazy val core = crossProject(JVMPlatform)
