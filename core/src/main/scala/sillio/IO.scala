@@ -1,14 +1,37 @@
+/*
+ * Copyright 2023 Daniel Spiewak
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package sillio
 
 import cats.{Monad, StackSafeMonad}
 
-import scala.concurrent.{Await, CancellationException, ExecutionContext, Future, Promise}
+import scala.concurrent.{
+  Await,
+  CancellationException,
+  ExecutionContext,
+  Future,
+  Promise
+}
 import scala.concurrent.duration.Duration
 import scala.util.{Failure, Success, Try}
 
 sealed abstract class IO[+A] {
   def flatMap[B](f: A => IO[B]): IO[B] = IO.FlatMap(this, f)
-  def handleErrorWith[A2 >: A](f: Throwable => IO[A2]): IO[A2] = IO.HandleErrorWith(this, f)
+  def handleErrorWith[A2 >: A](f: Throwable => IO[A2]): IO[A2] =
+    IO.HandleErrorWith(this, f)
 
   def start: IO[Fiber[A]] = IO.Start(this)
 
@@ -18,8 +41,8 @@ sealed abstract class IO[+A] {
 
     fiber onComplete {
       case Left(Some(t)) => promise.complete(Failure(t))
-      case Left(None) => promise.complete(Failure(new CancellationException))
-      case Right(a) => promise.complete(Success(a))
+      case Left(None)    => promise.complete(Failure(new CancellationException))
+      case Right(a)      => promise.complete(Success(a))
     }
 
     executor.execute(fiber)
@@ -56,11 +79,13 @@ object IO {
     def tag: Int = 2
   }
 
-  final case class HandleErrorWith[A](ioa: IO[A], f: Throwable => IO[A]) extends IO[A] {
+  final case class HandleErrorWith[A](ioa: IO[A], f: Throwable => IO[A])
+      extends IO[A] {
     def tag: Int = 3
   }
 
-  final case class Async[+A](k: (Either[Throwable, A] => Unit) => Unit) extends IO[A] {
+  final case class Async[+A](k: (Either[Throwable, A] => Unit) => Unit)
+      extends IO[A] {
     def tag: Int = 4
   }
 

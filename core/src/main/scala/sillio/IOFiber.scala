@@ -1,3 +1,19 @@
+/*
+ * Copyright 2023 Daniel Spiewak
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package sillio
 
 import cats.syntax.all._
@@ -8,7 +24,9 @@ import scala.util.control.NonFatal
 
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
-final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fiber[A] with Runnable {
+final class IOFiber[A](_current: IO[A], executor: ExecutionContext)
+    extends Fiber[A]
+    with Runnable {
 
   private[this] var current: IO[Any] = _current
 
@@ -17,7 +35,8 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
 
   continuations.push(0)
 
-  private[this] val listeners: AtomicReference[Set[Either[Option[Throwable], A] => Unit]] =
+  private[this] val listeners
+      : AtomicReference[Set[Either[Option[Throwable], A] => Unit]] =
     new AtomicReference(Set())
 
   @volatile
@@ -152,7 +171,9 @@ final class IOFiber[A](_current: IO[A], executor: ExecutionContext) extends Fibe
     }
   }
 
-  private[this] def fireCompletion(outcome: Either[Option[Throwable], A]): Unit = {
+  private[this] def fireCompletion(
+      outcome: Either[Option[Throwable], A]
+  ): Unit = {
     val ls = listeners.getAndSet(null)
     if (ls != null) {
       this.outcome = outcome
